@@ -191,7 +191,13 @@ function M.setup(opts)
 
     vim.api.nvim_create_user_command('TempuraConvert', function(cmd_opts)
         M.convert(cmd_opts.fargs[1])
-    end, { nargs = 1, complete = 'metric,imperial', desc = 'Convert recipe units (metric/imperial)' })
+    end, {
+        nargs = 1,
+        desc = 'Convert recipe units (metric/imperial)',
+        complete = function()
+            return { 'metric', 'imperial' }
+        end
+    })
 end
 
 return M
