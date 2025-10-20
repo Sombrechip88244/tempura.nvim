@@ -194,10 +194,12 @@ function M.setup(opts)
     end, {
         nargs = 1,
         desc = 'Convert recipe units (metric/imperial)',
-        complete = function()
+        complete = function(_, _, _)
             return { 'metric', 'imperial' }
         end
     })
+
+    return M
 end
 
 return M
