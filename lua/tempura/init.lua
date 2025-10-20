@@ -1,7 +1,6 @@
 local M = {}
 
 -- Dynamically calculate the plugin's root path by navigating up from this file's location.
--- This ensures the path works whether the plugin is managed by lazy.nvim or manually installed.
 local plugin_root = vim.fn.fnamemodify(debug.getinfo(1).source:sub(2), ':p:h:h:h')
 local PY_SCRIPT_PATH = plugin_root .. '/python/tempura_cli.py'
 
@@ -79,7 +78,7 @@ function M.convert(target_system)
     end
 
     if not start_line then
-        vim.notify("Could not find '## Ingredients 🧂' section.", vim.log.levels.ERROR)
+        vim.notify("Could not find '## Ingredients 🧂' section. Ensure the recipe is correctly formatted.", vim.log.levels.ERROR)
         return
     end
     
@@ -117,9 +116,11 @@ function M.setup(opts)
         M.scrape(cmd_opts.fargs[1])
     end, { nargs = 1, desc = 'Scrape a recipe URL and save as Markdown' })
 
+    -- FIX: Changed 'complete' to a string of comma-separated options for simple completion.
+    -- The previous version used a table, which is only valid if 'complete' is set to a function.
     vim.api.nvim_create_user_command('TempuraConvert', function(cmd_opts)
         M.convert(cmd_opts.fargs[1])
-    end, { nargs = 1, complete = {'metric', 'imperial'}, desc = 'Convert recipe units (metric/imperial)' })
+    end, { nargs = 1, complete = 'metric,imperial', desc = 'Convert recipe units (metric/imperial)' })
 end
 
 return M
