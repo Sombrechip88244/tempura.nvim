@@ -24,7 +24,7 @@ To ensure these dependencies are installed automatically when you install the pl
 
 #### Lazy Spec
 ```lua
-{
+return {
   "Sombrechip88244/tempura.nvim",
   lazy = false,
   
