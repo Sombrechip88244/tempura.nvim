@@ -57,7 +57,8 @@ def convert_ingredients(ingredients_list, target_system):
 def scrape_to_markdown(url):
     """Scrapes a recipe URL and prints the recipe in a structured Markdown format."""
     try:
-        scraper = scrape_me(url, wild_mode=True)
+        # Initialize scraper
+        scraper = scrape_me(url)
         
         md = f"# {scraper.title()}\n\n"
         md += f"Source: <{url}>\n\n"
@@ -77,16 +78,17 @@ def scrape_to_markdown(url):
                 step_number += 1
 
         print(md)
+        return True
         
     except Exception as e:
         print(f"Error scraping recipe: {e}", file=sys.stderr)
         sys.exit(1)
 
-
 # --- Main CLI Entry Point ---
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
+        print("Error: Insufficient arguments", file=sys.stderr)
         sys.exit(1)
 
     command = sys.argv[1].lower()
@@ -97,6 +99,7 @@ if __name__ == "__main__":
     
     elif command == "convert":
         if len(sys.argv) < 4:
+            print("Error: Missing arguments for convert command", file=sys.stderr)
             sys.exit(1)
             
         target_system = sys.argv[2]
@@ -104,7 +107,9 @@ if __name__ == "__main__":
         
         try:
             ingredients_list = json.loads(ingredients_json)
-        except json.JSONDecodeError as e:
+            if not isinstance(ingredients_list, list):
+                raise ValueError("Input must be a JSON array of strings")
+        except (json.JSONDecodeError, ValueError) as e:
             print(f"Error decoding JSON input: {e}", file=sys.stderr)
             sys.exit(1)
         
@@ -117,4 +122,5 @@ if __name__ == "__main__":
         print(json.dumps(converted)) 
         
     else:
+        print(f"Error: Unknown command '{command}'", file=sys.stderr)
         sys.exit(1)
