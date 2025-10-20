@@ -1,2 +1,2 @@
-recipe-scrapers
+recipe-scrapers>=25.0.0
 pint
