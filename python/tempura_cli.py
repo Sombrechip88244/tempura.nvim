@@ -4,6 +4,10 @@ import re
 from recipe_scrapers import scrape_me
 from pint import UnitRegistry, UndefinedUnitError
 
+# add these imports for the fallback scraper
+import requests
+from bs4 import BeautifulSoup
+
 # --- Initialization ---
 ureg = UnitRegistry()
 
@@ -108,22 +112,24 @@ def convert_ingredients(ingredients_list, target_system):
 # --- Scraping Logic ---
 
 def scrape_to_markdown(url):
-    """Scrapes a recipe URL and prints the recipe in a structured Markdown format."""
+    """Scrapes a recipe URL and prints the recipe in a structured Markdown format.
+    Tries recipe-scrapers first, then falls back to a lightweight HTML parser.
+    Returns 0 on success, 1 on error.
+    """
     try:
-        # Initialize scraper
         scraper = scrape_me(url)
-        
+
         md = f"# {scraper.title()}\n\n"
         md += f"Source: <{url}>\n\n"
         md += "---\n\n"
-        
+
         md += "## Ingredients 🧂\n\n"
         for ing in scraper.ingredients():
             md += f"* {ing}\n"
-            
+
         md += "\n## Instructions 🔪\n\n"
         instructions = scraper.instructions().split('\n')
-        
+
         step_number = 1
         for step in instructions:
             if step.strip():
@@ -131,11 +137,93 @@ def scrape_to_markdown(url):
                 step_number += 1
 
         print(md)
-        return True
-        
-    except Exception as e:
-        print(f"Error scraping recipe: {e}", file=sys.stderr)
-        sys.exit(1)
+        return 0
+
+    except Exception as primary_err:
+        # fallback: basic HTML parsing
+        try:
+            resp = requests.get(url, timeout=10, headers={'User-Agent': 'tempura/1.0'})
+            if resp.status_code != 200:
+                raise Exception(f"HTTP {resp.status_code}")
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+
+            # title
+            title_node = soup.find('h1') or soup.title
+            title = title_node.get_text(strip=True) if title_node else 'Recipe'
+
+            # collect ingredients from common places (class/id contains "ingredient", list under headers)
+            ingredients = []
+
+            selectors = [
+                '[class*="ingredient"]',
+                '[id*="ingredient"]',
+                '[class*="ingredients"]',
+                '[id*="ingredients"]'
+            ]
+            for sel in selectors:
+                for node in soup.select(sel):
+                    for li in node.find_all('li'):
+                        ingredients.append(li.get_text(strip=True))
+                    if not node.find_all('li'):
+                        text = node.get_text('\n').strip()
+                        for line in text.splitlines():
+                            if line.strip():
+                                ingredients.append(line.strip())
+
+            # headers containing the word "ingredient"
+            for hdr in soup.find_all(['h2', 'h3', 'h4'], string=re.compile('ingredient', re.I)):
+                ul = hdr.find_next(['ul', 'ol'])
+                if ul:
+                    for li in ul.find_all('li'):
+                        ingredients.append(li.get_text(strip=True))
+
+            # dedupe while preserving order
+            seen = set()
+            ingredients = [x for x in ingredients if x and not (x in seen or seen.add(x))]
+
+            if not ingredients:
+                raise Exception("Fallback scraping couldn't find ingredients")
+
+            # instructions: look for headers with instruction-like words
+            instructions = []
+            for hdr in soup.find_all(['h2', 'h3', 'h4'], string=re.compile('instruction|direction|method|preparation|step', re.I)):
+                ol = hdr.find_next(['ol', 'ul'])
+                if ol:
+                    for li in ol.find_all('li'):
+                        instructions.append(li.get_text(strip=True))
+                else:
+                    # collect following paragraphs until next header (small heuristic)
+                    node = hdr.find_next_sibling()
+                    count = 0
+                    while node and node.name not in ['h1', 'h2', 'h3', 'h4'] and count < 30:
+                        if node.name == 'p':
+                            text = node.get_text(strip=True)
+                            if text:
+                                instructions.append(text)
+                        node = node.find_next_sibling()
+                        count += 1
+
+            # build markdown
+            md = f"# {title}\n\n"
+            md += f"Source: <{url}>\n\n"
+            md += "---\n\n"
+
+            md += "## Ingredients 🧂\n\n"
+            for ing in ingredients:
+                md += f"* {ing}\n"
+
+            if instructions:
+                md += "\n## Instructions 🔪\n\n"
+                for i, step in enumerate(instructions, 1):
+                    md += f"{i}. {step}\n"
+
+            print(md)
+            return 0
+
+        except Exception as fallback_err:
+            print(f"Error scraping recipe: {primary_err}  |  fallback failed: {fallback_err}", file=sys.stderr)
+            return 1
 
 # --- Main CLI Entry Point ---
 
