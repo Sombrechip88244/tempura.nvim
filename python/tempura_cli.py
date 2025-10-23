@@ -168,11 +168,9 @@ def _extract_from_jsonld(soup):
     return None, None, None
 
 def scrape_to_markdown(url):
-    """Scrapes a recipe URL and prints the recipe in a structured Markdown format.
-    Tries recipe-scrapers first, then JSON-LD/microdata, then a lightweight HTML parser.
-    Returns 0 on success, 1 on error.
-    """
+    """Scrapes a recipe URL and prints the recipe in a structured Markdown format."""
     clean_url = url.split('#')[0]
+    primary_error = None
 
     # First try recipe-scrapers
     try:
@@ -197,13 +195,14 @@ def scrape_to_markdown(url):
         print(md)
         return 0
 
-    except Exception as primary_err:
+    except Exception as e:
+        primary_error = str(e)
         # Continue to fallback parsing
         pass
 
     # Fetch page and parse
     try:
-        resp = requests.get(clean_url, timeout=10, headers={'User-Agent': 'tempura/1.0'})
+        resp = requests.get(clean_url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
         if resp.status_code != 200:
             raise Exception(f"HTTP {resp.status_code}")
 
@@ -310,6 +309,45 @@ def scrape_to_markdown(url):
                     break
 
         if not ingredients:
+            # Extra debug info
+            print(f"Debug: Found {len(soup.find_all('ul'))} ul elements", file=sys.stderr)
+            print(f"Debug: Found {len(soup.find_all('li'))} li elements", file=sys.stderr)
+            
+            # More aggressive ingredient finding: scan paragraphs, table cells and all visible text lines
+            candidate_lines = []
+
+            # paragraphs and table cells
+            for node in soup.find_all(['p', 'td', 'th', 'li']):
+                txt = node.get_text(' ', strip=True)
+                if txt and len(txt) < 2000:
+                    candidate_lines.extend([ln.strip() for ln in re.split(r'[\r\n]+', txt) if ln.strip()])
+
+            # larger content blocks (entry/article)
+            for sel in ['article', '[class*="entry"]', '[class*="content"]', '[id*="content"]', '[class*="recipe"]']:
+                for node in soup.select(sel):
+                    txt = node.get_text('\n').strip()
+                    if txt:
+                        candidate_lines.extend([ln.strip() for ln in txt.splitlines() if ln.strip()])
+
+            # fallback to whole body text split into lines
+            if not candidate_lines:
+                body_txt = soup.get_text('\n').strip()
+                candidate_lines = [ln.strip() for ln in body_txt.splitlines() if ln.strip()]
+
+            # scoring: prefer lines that contain a number or cooking measurement words
+            unit_pattern = re.compile(r'\b(\d+(/\d+)?|\d+\.\d+|cup|cups|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|oz|ounce|ounces|gram|grams|g|kg|ml|clove|pinch|pound|lb|slice)\b', re.I)
+            for ln in candidate_lines:
+                if unit_pattern.search(ln):
+                    # ignore very long lines
+                    if len(ln) < 300:
+                        ingredients.append(ln)
+
+            # try to dedupe while preserving order
+            if ingredients:
+                seen = set()
+                ingredients = [x for x in ingredients if x and not (x in seen or seen.add(x))]
+
+        if not ingredients:
             raise Exception("Fallback scraping couldn't find ingredients")
 
         # build markdown
@@ -330,7 +368,7 @@ def scrape_to_markdown(url):
         return 0
 
     except Exception as fallback_err:
-        print(f"Error scraping recipe: {primary_err}  |  fallback failed: {fallback_err}", file=sys.stderr)
+        print(f"Error scraping recipe: {primary_error} | Fallback failed: {str(fallback_err)}", file=sys.stderr)
         return 1
 
 # --- Main CLI Entry Point ---

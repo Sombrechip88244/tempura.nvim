@@ -1,4 +1,4 @@
-recipe-scrapers>=25.0.0
+recipe-scrapers>=15.9.0
 pint
 requests
 beautifulsoup4
