@@ -25,20 +25,22 @@ local function call_python_script(args)
         return nil
     end
 
-    local cmd = { 'python3', PY_SCRIPT_PATH }
-    
+    -- build a shell-escaped command string so we capture stderr too
+    local parts = { vim.fn.shellescape('python3'), vim.fn.shellescape(PY_SCRIPT_PATH) }
     for _, arg in ipairs(args) do
-        table.insert(cmd, arg)
+        table.insert(parts, vim.fn.shellescape(tostring(arg)))
     end
+    local cmd_str = table.concat(parts, ' ') .. ' 2>&1'
 
-    local result = vim.fn.system(cmd)
+    local result = vim.fn.system(cmd_str)
     local status = vim.v.shell_error
 
     if status ~= 0 then
+        -- show full python output (stdout+stderr) so we can debug conversion errors
         vim.notify("Tempura Error: Python script failed. Output: " .. result, vim.log.levels.ERROR, { title = "Tempura.nvim" })
         return nil
     end
-    
+
     return result
 end
 
