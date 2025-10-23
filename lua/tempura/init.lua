@@ -204,74 +204,84 @@ function M.convert(target_system)
     end
 end
 
-local has_telescope = pcall(require, 'telescope')
 local recipes_dir = vim.fn.expand('~/.tempura-recipies')
 
 local function find_recipes()
-    if not has_telescope then
+    local ok, telescope = pcall(require, 'telescope')
+    if not ok or not telescope then
         vim.notify("Telescope.nvim is required but not found", vim.log.levels.ERROR)
         return
     end
 
-    local pickers = require "telescope.pickers"
-    local finders = require "telescope.finders"
-    local conf = require("telescope.config").values
-    local previewers = require("telescope.previewers")
+    local pickers = require('telescope.pickers')
+    local finders = require('telescope.finders')
+    local conf = require('telescope.config').values
+    local previewers = require('telescope.previewers')
+    local actions = require('telescope.actions')
+    local action_state = require('telescope.actions.state')
 
-    -- Find all markdown files in the recipes directory
-    local recipes = {}
-    local handle = vim.loop.fs_scandir(recipes_dir)
-    
-    if handle then
-        while true do
-            local name, type = vim.loop.fs_scandir_next(handle)
-            if not name then break end
-            
-            if name:match("%.md$") then
-                local path = recipes_dir .. '/' .. name
-                local display_name = name:gsub("%.md$", ""):gsub("-", " ")
-                table.insert(recipes, {
-                    value = path,
-                    display = display_name,
-                    ordinal = display_name,
-                })
-            end
-        end
-    end
-
-    if #recipes == 0 then
-        vim.notify("No recipes found in " .. recipes_dir, vim.log.levels.WARN)
+    -- ensure recipes dir exists
+    if vim.fn.isdirectory(recipes_dir) == 0 then
+        vim.notify("No recipes directory found at: " .. recipes_dir, vim.log.levels.WARN)
         return
     end
 
-    -- Create and run the picker
+    -- find markdown files recursively using globpath (returns a table)
+    local files = vim.fn.globpath(recipes_dir, '**/*.md', false, true)
+    if type(files) ~= 'table' then files = {} end
+
+    -- debug: how many files found
+    vim.notify("Tempura: found " .. tostring(#files) .. " recipe file(s)", vim.log.levels.INFO)
+
+    if #files == 0 then
+        vim.notify("No recipe files found. Save some recipes first!", vim.log.levels.WARN)
+        return
+    end
+
+    local results = {}
+    for _, path in ipairs(files) do
+        local name = vim.fn.fnamemodify(path, ':t')            -- filename.md
+        local display = name:gsub('%.md$', ''):gsub('%-',' ')
+        table.insert(results, {
+            value = path,
+            display = display,
+            ordinal = display,
+            path = path,
+        })
+    end
+
     pickers.new({}, {
         prompt_title = "📖 Tempura Recipes",
-        finder = finders.new_table({
-            results = recipes,
+        finder = finders.new_table {
+            results = results,
             entry_maker = function(entry)
                 return {
                     value = entry.value,
                     display = entry.display,
                     ordinal = entry.ordinal,
-                    path = entry.value,
+                    path = entry.path,
                 }
             end,
-        }),
+        },
         previewer = previewers.new_buffer_previewer({
             title = "Recipe Preview",
             define_preview = function(self, entry)
-                local lines = vim.fn.readfile(entry.path)
+                if not entry or not entry.path then return end
+                local ok_lines, lines = pcall(vim.fn.readfile, entry.path)
+                if not ok_lines then
+                    vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, {"[Error reading file]"})
+                    return
+                end
                 vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
                 vim.api.nvim_buf_set_option(self.state.bufnr, 'filetype', 'markdown')
             end,
         }),
         sorter = conf.generic_sorter({}),
-        attach_mappings = function(prompt_bufnr)
-            require("telescope.actions").select_default:replace(function()
-                local selection = require("telescope.actions.state").get_selected_entry()
-                require("telescope.actions").close(prompt_bufnr)
-                if selection then
+        attach_mappings = function(prompt_bufnr, map)
+            actions.select_default:replace(function()
+                local selection = action_state.get_selected_entry()
+                actions.close(prompt_bufnr)
+                if selection and selection.path then
                     vim.cmd("edit " .. vim.fn.fnameescape(selection.path))
                 end
             end)
