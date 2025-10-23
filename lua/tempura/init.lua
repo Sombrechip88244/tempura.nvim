@@ -65,20 +65,21 @@ function M.scrape(url)
         
         -- Ensure filename is not empty and has a reasonable length
         if clean_filename == '' or #clean_filename > 255 then
-            clean_filename = os.time() .. '_recipe'
+            clean_filename = tostring(os.time()) .. '_recipe'
         end
-        
-        local save_dir = vim.fn.stdpath('data') .. '/tempura_recipes'
-        
+
+        -- Save into the user's home dir: ~/.tempura-recipies
+        local save_dir = vim.fn.expand('~/.tempura-recipies')
+
         -- Safe directory creation
-        local mkdir_ok, mkdir_err = pcall(vim.fn.mkdir, save_dir, 'p')
-        if not mkdir_ok then
-            vim.notify("Failed to create directory: " .. mkdir_err, vim.log.levels.ERROR)
+        local ok_mkdir, mkdir_err = pcall(vim.fn.mkdir, save_dir, 'p')
+        if not ok_mkdir then
+            vim.notify("Failed to create directory: " .. tostring(mkdir_err), vim.log.levels.ERROR)
             return
         end
-        
+
         local save_path = save_dir .. '/' .. clean_filename .. '.md'
-        
+
         -- Safe file writing
         local ok, err = pcall(function()
             vim.cmd('edit ' .. vim.fn.fnameescape(save_path))
@@ -86,10 +87,10 @@ function M.scrape(url)
         end)
         
         if not ok then
-            vim.notify("Failed to save recipe: " .. err, vim.log.levels.ERROR)
+            vim.notify("Failed to save recipe: " .. tostring(err), vim.log.levels.ERROR)
             return
         end
-        
+
         vim.notify("Recipe saved and opened: " .. save_path, vim.log.levels.INFO, { title = "Tempura.nvim" })
     end
 end
