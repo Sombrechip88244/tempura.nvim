@@ -1,10 +1,63 @@
 import sys
 import json
+import re
 from recipe_scrapers import scrape_me
 from pint import UnitRegistry, UndefinedUnitError
 
 # --- Initialization ---
 ureg = UnitRegistry()
+
+# --- Helpers ---
+_fraction_re = re.compile(r'^\d+\s+\d+/\d+$|^\d+/\d+$|^\d+(?:\.\d+)?$')
+
+def _parse_amount_unit_description(line):
+    """
+    Very-lightweight heuristic parser.
+    Returns (amount_str, unit_str, description) or (None, None, line) if parsing fails.
+    Handles:
+      - "1 cup sugar"
+      - "1 1/2 cups flour"
+      - "3/4 tsp salt"
+      - "1 (14 oz) can tomatoes" -> falls back to original line
+    """
+    if not line or not line.strip():
+        return None, None, line
+
+    tokens = line.strip().split()
+    if not tokens:
+        return None, None, line
+
+    # identify amount (supports mixed numbers like "1 1/2")
+    amount_tokens = []
+    idx = 0
+    if _fraction_re.match(tokens[0]):
+        amount_tokens.append(tokens[0])
+        idx = 1
+        # mixed number like "1 1/2"
+        if idx < len(tokens) and re.match(r'^\d+/\d+$', tokens[idx]):
+            amount_tokens.append(tokens[idx])
+            idx += 1
+    else:
+        # first token is not a plain number/fraction -> give up
+        return None, None, line
+
+    amount_str = ' '.join(amount_tokens)
+
+    # next token as unit if present and looks like a unit (letters or %)
+    if idx < len(tokens):
+        unit_candidate = tokens[idx].strip().rstrip('.,;:')
+        # avoid capturing parenthetical or things like "can", "package" as units for conversion
+        if re.search(r'[A-Za-z%/]+', unit_candidate):
+            unit_str = unit_candidate
+            idx += 1
+        else:
+            return None, None, line
+    else:
+        return None, None, line
+
+    description = ' '.join(tokens[idx:])
+
+    return amount_str, unit_str, description
 
 # --- Unit Conversion Logic ---
 
