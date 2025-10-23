@@ -68,44 +68,110 @@ def _parse_amount_unit_description(line):
 def convert_ingredients(ingredients_list, target_system):
     """Converts a list of ingredient strings to the target unit system (metric or imperial)."""
     converted_list = []
-    
-    target_unit_map = {
-        'metric': 'milliliter',
-        'imperial': 'cup'
-    }
-    
-    target_unit_str = target_unit_map.get(target_system.lower())
-    
-    if not target_unit_str:
+
+    target_system = target_system.lower()
+    if target_system not in ('metric', 'imperial'):
         return ingredients_list, "Invalid target system. Use 'metric' or 'imperial'."
+
+    # simple alias map for common units
+    unit_alias = {
+        'tbs': 'tablespoon', 'tbsp': 'tablespoon', 'tablespoons': 'tablespoon',
+        'tsp': 'teaspoon', 'tsps': 'teaspoon',
+        'cup': 'cup', 'cups': 'cup',
+        'oz': 'ounce', 'ounce': 'ounce', 'ounces': 'ounce',
+        'lb': 'pound', 'lbs': 'pound', 'pound': 'pound',
+        'g': 'gram', 'gram': 'gram', 'grams': 'gram',
+        'kg': 'kilogram', 'ml': 'milliliter', 'l': 'liter',
+        'clove': 'count', 'cloves': 'count', 'slice': 'count'
+    }
+
+    # regex to capture amount (mixed numbers, fractions, decimals) + unit + rest
+    amt_unit_re = re.compile(r'^\s*(\d+\s+\d+/\d+|\d+/\d+|\d+\.\d+|\d+)\s*([A-Za-z%]+)?\.?\s*(.*)$')
 
     for line in ingredients_list:
         try:
-            q = ureg.Quantity(line)
-            
-            is_volume_or_mass = (q.dimensionality == ureg.ounce.dimensionality or 
-                                ureg.check('[volume]') in q.dimensionality or
-                                ureg.check('[mass]') in q.dimensionality)
+            m = amt_unit_re.match(line)
+            if not m:
+                converted_list.append(line)
+                continue
 
-            if is_volume_or_mass:
-                original_unit_str = str(q.units)
-                remaining_description = line.split(original_unit_str, 1)[-1].strip()
-                
-                if target_system.lower() == 'metric':
-                    converted_q = q.to_base_units()
-                    converted_line = f"{converted_q:~P} {remaining_description}"
-                else: 
-                    converted_q = q.to(target_unit_str)
-                    converted_line = f"{converted_q:~P} {remaining_description}"
+            amt_str, unit_token, desc = m.groups()
+            desc = desc.strip() if desc else ''
+
+            # normalize amount (mixed numbers, fractions)
+            amount_norm = None
+            if ' ' in amt_str and '/' in amt_str:
+                # mixed number e.g. "1 1/2"
+                whole, frac = amt_str.split()
+                num, den = frac.split('/')
+                amount_norm = float(whole) + float(num) / float(den)
+            elif '/' in amt_str and '.' not in amt_str:
+                num, den = amt_str.split('/')
+                amount_norm = float(num) / float(den)
             else:
-                converted_line = line
-                
-        except UndefinedUnitError:
-            converted_line = line
-        except Exception:
-            converted_line = line
+                amount_norm = float(amt_str)
 
-        converted_list.append(converted_line)
+            if not unit_token:
+                converted_list.append(line)
+                continue
+
+            unit_key = unit_token.lower()
+            unit_name = unit_alias.get(unit_key, unit_key)
+
+            # Build pint quantity
+            try:
+                q = ureg.Quantity(amount_norm, unit_name)
+            except Exception:
+                # last attempt: let pint parse expression
+                try:
+                    q = ureg.parse_expression(f"{amount_norm} {unit_name}")
+                except Exception:
+                    converted_list.append(line)
+                    continue
+
+            dim = q.dimensionality
+
+            # choose sensible target unit
+            if '[volume]' in str(dim) or dim == ureg.milliliter.dimensionality or dim == ureg.liter.dimensionality:
+                target_unit = 'milliliter' if target_system == 'metric' else 'cup'
+            elif '[mass]' in str(dim) or dim == ureg.gram.dimensionality or dim == ureg.kilogram.dimensionality:
+                target_unit = 'gram' if target_system == 'metric' else 'ounce'
+            else:
+                # dimensionless or count -> leave unchanged
+                converted_list.append(line)
+                continue
+
+            # perform conversion
+            try:
+                converted_q = q.to(target_unit)
+            except Exception:
+                converted_list.append(line)
+                continue
+
+            # format magnitude smartly
+            mag = converted_q.magnitude
+            if abs(mag - round(mag)) < 1e-6:
+                mag_str = str(int(round(mag)))
+            else:
+                mag_str = f"{round(mag, 2):.2f}".rstrip('0').rstrip('.')
+
+            # short unit names map
+            short_unit_map = {
+                'milliliter': 'ml', 'liter': 'l', 'gram': 'g', 'kilogram': 'kg',
+                'ounce': 'oz', 'pound': 'lb', 'cup': 'cup'
+            }
+            unit_out = short_unit_map.get(str(converted_q.units), str(converted_q.units))
+
+            if desc:
+                converted_line = f"{mag_str} {unit_out} {desc}"
+            else:
+                converted_line = f"{mag_str} {unit_out}"
+
+            converted_list.append(converted_line)
+
+        except Exception:
+            # On any unexpected error, keep original line
+            converted_list.append(line)
 
     return converted_list, None
 
