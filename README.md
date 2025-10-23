@@ -12,7 +12,7 @@ A Neovim plugin for seamless recipe management. Scrape recipes from the web and 
 
 ## 📦 Installation (using lazy.nvim)
 
-Tempura.nvim requires **Python 3** and specific libraries (recipe-scrapers and pint) to handle the heavy lifting of scraping and unit conversion.
+Tempura.nvim requires **Python 3** and specific libraries (recipe-scrapers, pint, requests, beautifulsoup4, lxml)**with lazy.nvim install they will be installed automatically** to handle the heavy lifting of scraping and unit conversion.
 
 To ensure these dependencies are installed automatically when you install the plugin, use the following lazy.nvim specification in your configuration (e.g., in ~/.config/nvim/lua/plugins/init.lua):
 
@@ -41,11 +41,16 @@ return {
 
 ## 🛠️ Usage
 
+> [!TIP]
+> Only use html websites (aka not overly javascript)
+
+
+
 1. Scrape a Recipe
 
 Use the :TempuraScrape command followed by the URL of the recipe you want to download.
 
-:TempuraScrape [https://www.allrecipes.com/recipe/20263/tasty-salmon-patties/](https://www.allrecipes.com/recipe/20263/tasty-salmon-patties/)
+:TempuraScrape [https://cafedelites.com/creamy-tomato-pasta/#wprm-recipe-container-87967](https://cafedelites.com/creamy-tomato-pasta/#wprm-recipe-container-87967)
 
 
 This will:
@@ -54,7 +59,7 @@ Scrape the data.
 
 Create a new buffer with the recipe in Markdown format.
 
-Save the file to your Neovim data directory (~/.local/share/nvim/tempura_recipes/).
+Save the file to your tempura recipies directory (~/.tempura-recipies/).
 
 2. Convert Units
 
