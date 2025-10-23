@@ -111,14 +111,72 @@ def convert_ingredients(ingredients_list, target_system):
 
 # --- Scraping Logic ---
 
+def _extract_from_jsonld(soup):
+    """Return (title, ingredients_list, instructions_list) or (None, None, None)."""
+    for script in soup.find_all('script', type='application/ld+json'):
+        try:
+            data = json.loads(script.string)
+        except Exception:
+            continue
+
+        # JSON-LD can be a list or single object
+        items = data if isinstance(data, list) else [data]
+        for item in items:
+            # sometimes nested under '@graph'
+            if isinstance(item, dict) and '@graph' in item:
+                graph = item.get('@graph') or []
+                if isinstance(graph, list):
+                    items.extend(graph)
+
+        for obj in items:
+            if not isinstance(obj, dict):
+                continue
+            typ = obj.get('@type') or obj.get('type') or ''
+            if isinstance(typ, list):
+                is_recipe = 'Recipe' in typ
+            else:
+                is_recipe = typ and 'recipe' in str(typ).lower() or typ == 'Recipe'
+            if not is_recipe:
+                # sometimes name is present with recipeIngredient key even if @type missing
+                if 'recipeIngredient' not in obj and 'ingredients' not in obj:
+                    continue
+
+            title = obj.get('name') or obj.get('headline')
+            ingredients = obj.get('recipeIngredient') or obj.get('ingredients') or []
+            # normalize instructions
+            raw_instructions = obj.get('recipeInstructions') or obj.get('instructions') or []
+            instructions = []
+            if isinstance(raw_instructions, str):
+                # split on newlines or sentences heuristically
+                for ln in re.split(r'\n+', raw_instructions):
+                    if ln.strip():
+                        instructions.append(ln.strip())
+            elif isinstance(raw_instructions, list):
+                for step in raw_instructions:
+                    if isinstance(step, str):
+                        if step.strip():
+                            instructions.append(step.strip())
+                    elif isinstance(step, dict):
+                        # Could be HowToStep or similar
+                        text = step.get('text') or step.get('description') or ''
+                        if text:
+                            instructions.append(text.strip())
+            # final normalize ingredients to strings
+            ingredients = [str(x).strip() for x in ingredients if str(x).strip()]
+            if ingredients:
+                return title or 'Recipe', ingredients, instructions
+    return None, None, None
+
 def scrape_to_markdown(url):
     """Scrapes a recipe URL and prints the recipe in a structured Markdown format.
-    Tries recipe-scrapers first, then falls back to a lightweight HTML parser.
+    Tries recipe-scrapers first, then JSON-LD/microdata, then a lightweight HTML parser.
     Returns 0 on success, 1 on error.
     """
-    try:
-        scraper = scrape_me(url)
+    clean_url = url.split('#')[0]
 
+    # First try recipe-scrapers
+    try:
+        scraper = scrape_me(clean_url)
         md = f"# {scraper.title()}\n\n"
         md += f"Source: <{url}>\n\n"
         md += "---\n\n"
@@ -140,90 +198,140 @@ def scrape_to_markdown(url):
         return 0
 
     except Exception as primary_err:
-        # fallback: basic HTML parsing
-        try:
-            resp = requests.get(url, timeout=10, headers={'User-Agent': 'tempura/1.0'})
-            if resp.status_code != 200:
-                raise Exception(f"HTTP {resp.status_code}")
+        # Continue to fallback parsing
+        pass
 
-            soup = BeautifulSoup(resp.text, 'html.parser')
+    # Fetch page and parse
+    try:
+        resp = requests.get(clean_url, timeout=10, headers={'User-Agent': 'tempura/1.0'})
+        if resp.status_code != 200:
+            raise Exception(f"HTTP {resp.status_code}")
 
-            # title
-            title_node = soup.find('h1') or soup.title
-            title = title_node.get_text(strip=True) if title_node else 'Recipe'
+        soup = BeautifulSoup(resp.text, 'html.parser')
 
-            # collect ingredients from common places (class/id contains "ingredient", list under headers)
-            ingredients = []
-
-            selectors = [
-                '[class*="ingredient"]',
-                '[id*="ingredient"]',
-                '[class*="ingredients"]',
-                '[id*="ingredients"]'
-            ]
-            for sel in selectors:
-                for node in soup.select(sel):
-                    for li in node.find_all('li'):
-                        ingredients.append(li.get_text(strip=True))
-                    if not node.find_all('li'):
-                        text = node.get_text('\n').strip()
-                        for line in text.splitlines():
-                            if line.strip():
-                                ingredients.append(line.strip())
-
-            # headers containing the word "ingredient"
-            for hdr in soup.find_all(['h2', 'h3', 'h4'], string=re.compile('ingredient', re.I)):
-                ul = hdr.find_next(['ul', 'ol'])
-                if ul:
-                    for li in ul.find_all('li'):
-                        ingredients.append(li.get_text(strip=True))
-
-            # dedupe while preserving order
-            seen = set()
-            ingredients = [x for x in ingredients if x and not (x in seen or seen.add(x))]
-
-            if not ingredients:
-                raise Exception("Fallback scraping couldn't find ingredients")
-
-            # instructions: look for headers with instruction-like words
-            instructions = []
-            for hdr in soup.find_all(['h2', 'h3', 'h4'], string=re.compile('instruction|direction|method|preparation|step', re.I)):
-                ol = hdr.find_next(['ol', 'ul'])
-                if ol:
-                    for li in ol.find_all('li'):
-                        instructions.append(li.get_text(strip=True))
-                else:
-                    # collect following paragraphs until next header (small heuristic)
-                    node = hdr.find_next_sibling()
-                    count = 0
-                    while node and node.name not in ['h1', 'h2', 'h3', 'h4'] and count < 30:
-                        if node.name == 'p':
-                            text = node.get_text(strip=True)
-                            if text:
-                                instructions.append(text)
-                        node = node.find_next_sibling()
-                        count += 1
-
-            # build markdown
-            md = f"# {title}\n\n"
+        # Try JSON-LD / structured data first
+        title, ingredients, instructions = _extract_from_jsonld(soup)
+        if ingredients:
+            md = f"# {title or 'Recipe'}\n\n"
             md += f"Source: <{url}>\n\n"
             md += "---\n\n"
-
             md += "## Ingredients 🧂\n\n"
             for ing in ingredients:
                 md += f"* {ing}\n"
-
             if instructions:
                 md += "\n## Instructions 🔪\n\n"
                 for i, step in enumerate(instructions, 1):
                     md += f"{i}. {step}\n"
-
             print(md)
             return 0
 
-        except Exception as fallback_err:
-            print(f"Error scraping recipe: {primary_err}  |  fallback failed: {fallback_err}", file=sys.stderr)
-            return 1
+        # Heuristic selectors (expanded)
+        ingredients = []
+        selectors = [
+            '[class*="ingredient"]',
+            '[id*="ingredient"]',
+            '[class*="ingredients"]',
+            '[id*="ingredients"]',
+            '[class*="ingre"]',
+            '[id*="ingre"]',
+            '[class*="recipe-ingredients"]',
+            '[id*="recipe-ingredients"]',
+            '[data-ingredient]',
+        ]
+        for sel in selectors:
+            for node in soup.select(sel):
+                # prefer list items
+                lis = node.find_all('li')
+                if lis:
+                    for li in lis:
+                        txt = li.get_text(' ', strip=True)
+                        if txt:
+                            ingredients.append(txt)
+                    continue
+                # else split lines within node
+                text = node.get_text('\n').strip()
+                for ln in text.splitlines():
+                    if ln.strip():
+                        ingredients.append(ln.strip())
+
+        # check headers with 'ingredient'
+        for hdr in soup.find_all(['h2', 'h3', 'h4'], string=re.compile('ingredient', re.I)):
+            ul = hdr.find_next(['ul', 'ol'])
+            if ul:
+                for li in ul.find_all('li'):
+                    txt = li.get_text(' ', strip=True)
+                    if txt:
+                        ingredients.append(txt)
+            else:
+                node = hdr.find_next_sibling()
+                steps = 0
+                while node and steps < 30:
+                    txt = node.get_text(' ', strip=True)
+                    if txt:
+                        ingredients.append(txt)
+                    node = node.find_next_sibling()
+                    steps += 1
+
+        # dedupe preserve order
+        seen = set()
+        ingredients = [x for x in ingredients if x and not (x in seen or seen.add(x))]
+
+        # instructions heuristic
+        instructions = []
+        for hdr in soup.find_all(['h2', 'h3', 'h4'], string=re.compile('instruction|direction|method|preparation|step', re.I)):
+            ol = hdr.find_next(['ol', 'ul'])
+            if ol:
+                for li in ol.find_all('li'):
+                    txt = li.get_text(' ', strip=True)
+                    if txt:
+                        instructions.append(txt)
+            else:
+                node = hdr.find_next_sibling()
+                steps = 0
+                while node and steps < 30:
+                    if node.name == 'p':
+                        txt = node.get_text(' ', strip=True)
+                        if txt:
+                            instructions.append(txt)
+                    node = node.find_next_sibling()
+                    steps += 1
+
+        # as last resort, try to find long text blocks that look like ingredients/instructions
+        if not ingredients:
+            # look for 'ul' elements near recipe-like headers
+            for ul in soup.find_all('ul'):
+                txt = ' '.join(li.get_text(' ', strip=True) for li in ul.find_all('li'))
+                if txt and len(txt) < 2000 and re.search(r'\b(tsp|tbsp|cup|ounce|gram|kg|g|ml|mls)\b', txt, re.I):
+                    for li in ul.find_all('li'):
+                        t = li.get_text(' ', strip=True)
+                        if t:
+                            ingredients.append(t)
+                if ingredients:
+                    break
+
+        if not ingredients:
+            raise Exception("Fallback scraping couldn't find ingredients")
+
+        # build markdown
+        md = f"# {soup.find('h1').get_text(strip=True) if soup.find('h1') else 'Recipe'}\n\n"
+        md += f"Source: <{url}>\n\n"
+        md += "---\n\n"
+
+        md += "## Ingredients 🧂\n\n"
+        for ing in ingredients:
+            md += f"* {ing}\n"
+
+        if instructions:
+            md += "\n## Instructions 🔪\n\n"
+            for i, step in enumerate(instructions, 1):
+                md += f"{i}. {step}\n"
+
+        print(md)
+        return 0
+
+    except Exception as fallback_err:
+        print(f"Error scraping recipe: {primary_err}  |  fallback failed: {fallback_err}", file=sys.stderr)
+        return 1
 
 # --- Main CLI Entry Point ---
 
