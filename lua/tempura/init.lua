@@ -204,62 +204,78 @@ function M.convert(target_system)
     end
 end
 
--- Add near the top with other local declarations
-local telescope_ok, telescope = pcall(require, 'telescope.builtin')
+-- Add these at the top with other local declarations
+local has_telescope, telescope = pcall(require, 'telescope')
+local telescope_builtin = require('telescope.builtin')
 local recipes_dir = vim.fn.expand('~/.tempura-recipies')
 
--- Replace the existing find_recipes function with this enhanced version:
-
+-- Replace the find_recipes function with this debug version
 local function find_recipes()
-    if not telescope_ok then
-        vim.notify("Telescope.nvim is required for this feature", vim.log.levels.ERROR)
+    -- Check for telescope
+    if not has_telescope then
+        vim.notify("Telescope.nvim is required but not found", vim.log.levels.ERROR)
         return
     end
+
+    -- Debug logging
+    vim.notify("Checking recipes directory: " .. recipes_dir)
 
     -- Ensure recipes directory exists
     if vim.fn.isdirectory(recipes_dir) == 0 then
-        vim.notify("No recipes found. Save some recipes first!", vim.log.levels.WARN)
+        vim.notify("No recipes directory found at: " .. recipes_dir, vim.log.levels.WARN)
+        -- Try to create it
+        local ok = vim.fn.mkdir(recipes_dir, 'p')
+        if ok == 0 then
+            vim.notify("Failed to create recipes directory", vim.log.levels.ERROR)
+            return
+        end
+    end
+
+    -- Check for markdown files
+    local handle = vim.loop.fs_scandir(recipes_dir)
+    local has_recipes = false
+    if handle then
+        local name, type = vim.loop.fs_scandir_next(handle)
+        while name do
+            if name:match("%.md$") then
+                has_recipes = true
+                break
+            end
+            name, type = vim.loop.fs_scandir_next(handle)
+        end
+    end
+
+    if not has_recipes then
+        vim.notify("No recipe files found. Try scraping some recipes first!", vim.log.levels.WARN)
         return
     end
 
-    -- Use telescope find_files with custom options
-    telescope.find_files({
+    -- Configure telescope
+    local telescope_opts = {
         prompt_title = "📖 Tempura Recipes",
-        search_dirs = { recipes_dir },
-        path_display = function(_, path)
-            -- Remove the full path prefix and .md extension for cleaner display
-            local name = path:gsub(recipes_dir .. '/', ''):gsub('%.md$', '')
-            -- Convert dashes back to spaces and capitalize words
-            return name:gsub('-', ' '):gsub('(%a)([%w_\']*)', function(first, rest)
-                return first:upper() .. rest:lower()
-            end)
-        end,
-        find_command = { "find", recipes_dir, "-type", "f", "-name", "*.md" },
-        previewer = require('telescope.previewers').new_buffer_previewer({
-            define_preview = function(self, entry, status)
-                -- Read the markdown file
-                local lines = vim.fn.readfile(entry.path)
-                -- Set the content in the preview buffer
-                vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
-                -- Set markdown filetype for syntax highlighting
-                vim.api.nvim_buf_set_option(self.state.bufnr, 'filetype', 'markdown')
-            end
-        }),
-        attach_mappings = function(prompt_bufnr, map)
-            -- Enter key opens the recipe in a new buffer
-            require('telescope.actions').select_default:replace(function()
-                require('telescope.actions').close(prompt_bufnr)
-                local selection = require('telescope.actions.state').get_selected_entry()
-                vim.cmd('edit ' .. selection.path)
-            end)
-            return true
-        end,
+        cwd = recipes_dir,
+        file_ignore_patterns = {"^%.", "^node_modules/"},
+        find_command = {"find", recipes_dir, "-type", "f", "-name", "*.md"},
+        layout_strategy = "horizontal",
         layout_config = {
-            width = 0.8,
-            height = 0.9,
             preview_width = 0.6,
+            width = 0.9,
+            height = 0.9,
         },
-    })
+        path_display = {"smart"},
+        previewer = require('telescope.previewers').vim_buffer_cat.new({
+            file_encoding = "utf8",
+        }),
+    }
+
+    -- Try to open telescope
+    local ok, err = pcall(function()
+        telescope_builtin.find_files(telescope_opts)
+    end)
+
+    if not ok then
+        vim.notify("Failed to open recipe browser: " .. tostring(err), vim.log.levels.ERROR)
+    end
 end
 
 --- Plugin Setup: Register Commands ---
