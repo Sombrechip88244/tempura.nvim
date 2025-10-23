@@ -1,2 +1,5 @@
 recipe-scrapers>=25.0.0
 pint
+requests
+beautifulsoup4
+lxml
