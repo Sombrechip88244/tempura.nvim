@@ -73,10 +73,10 @@ def convert_ingredients(ingredients_list, target_system):
     if target_system not in ('metric', 'imperial'):
         return ingredients_list, "Invalid target system. Use 'metric' or 'imperial'."
 
-    # simple alias map for common units
+    # simple alias map for common units (expanded)
     unit_alias = {
-        'tbs': 'tablespoon', 'tbsp': 'tablespoon', 'tablespoons': 'tablespoon',
-        'tsp': 'teaspoon', 'tsps': 'teaspoon',
+        'tbs': 'tablespoon', 'tbsp': 'tablespoon', 'tbsp.': 'tablespoon', 'tablespoons': 'tablespoon',
+        'tsp': 'teaspoon', 'tsp.': 'teaspoon', 'tsps': 'teaspoon',
         'cup': 'cup', 'cups': 'cup',
         'oz': 'ounce', 'ounce': 'ounce', 'ounces': 'ounce',
         'lb': 'pound', 'lbs': 'pound', 'pound': 'pound',
@@ -85,11 +85,36 @@ def convert_ingredients(ingredients_list, target_system):
         'clove': 'count', 'cloves': 'count', 'slice': 'count'
     }
 
+    # helper: expand common unicode vulgar fractions (½ ⅓ ¼ etc) to ascii fractions
+    def _normalize_unicode_fractions(s):
+        if not s:
+            return s
+        frac_map = {
+            '½': '1/2', '⅓': '1/3', '⅔': '2/3', '¼': '1/4', '¾': '3/4',
+            '⅛': '1/8', '⅜': '3/8', '⅝': '5/8', '⅞': '7/8'
+        }
+        for sym, rep in frac_map.items():
+            # turn "1½" -> "1 1/2"
+            s = re.sub(r'(\d)'+re.escape(sym), r'\1 ' + rep, s)
+            # turn "½ cup" -> "1/2 cup"
+            s = s.replace(sym, rep)
+        return s
+
     # regex to capture amount (mixed numbers, fractions, decimals) + unit + rest
-    amt_unit_re = re.compile(r'^\s*(\d+\s+\d+/\d+|\d+/\d+|\d+\.\d+|\d+)\s*([A-Za-z%]+)?\.?\s*(.*)$')
+    amt_unit_re = re.compile(r'^\s*(\d+\s+\d+/\d+|\d+/\d+|\d+\.\d+|\d+)\s*([A-Za-z%\.]+)?\.?\s*(.*)$')
 
     for line in ingredients_list:
         try:
+            if not line or not line.strip():
+                converted_list.append(line)
+                continue
+
+            # remove simple markdown bullets like "* " or "- "
+            line = re.sub(r'^\s*[\*\-]\s*', '', line).strip()
+
+            # normalize unicode fractions so "1½" etc are parsed
+            line = _normalize_unicode_fractions(line)
+
             m = amt_unit_re.match(line)
             if not m:
                 converted_list.append(line)
@@ -115,6 +140,8 @@ def convert_ingredients(ingredients_list, target_system):
                 converted_list.append(line)
                 continue
 
+            # strip trailing punctuation from unit token (e.g. "tbsp.")
+            unit_token = unit_token.rstrip('.,;:')
             unit_key = unit_token.lower()
             unit_name = unit_alias.get(unit_key, unit_key)
 
