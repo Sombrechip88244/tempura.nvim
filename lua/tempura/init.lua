@@ -204,6 +204,35 @@ function M.convert(target_system)
     end
 end
 
+-- Add near the top with other local declarations
+local telescope_ok, telescope = pcall(require, 'telescope.builtin')
+local recipes_dir = vim.fn.expand('~/.tempura-recipies')
+
+-- Add this new function
+local function find_recipes()
+    if not telescope_ok then
+        vim.notify("Telescope.nvim is required for this feature", vim.log.levels.ERROR)
+        return
+    end
+
+    -- Ensure recipes directory exists
+    if vim.fn.isdirectory(recipes_dir) == 0 then
+        vim.notify("No recipes found. Save some recipes first!", vim.log.levels.WARN)
+        return
+    end
+
+    -- Use telescope find_files with custom options
+    telescope.find_files({
+        prompt_title = "📖 Tempura Recipes",
+        search_dirs = { recipes_dir },
+        find_command = { "find", recipes_dir, "-type", "f", "-name", "*.md" },
+        attach_mappings = function(prompt_bufnr, map)
+            -- Add custom keymaps here if needed
+            return true
+        end,
+    })
+end
+
 --- Plugin Setup: Register Commands ---
 function M.setup(opts)
     if type(opts) ~= "table" and opts ~= nil then
@@ -232,11 +261,16 @@ function M.setup(opts)
         M.convert(cmd_opts.fargs[1])
     end, {
         nargs = 1,
-        desc = 'Convert recipe units (metric/imperial)',
-        complete = function(_, _, _)
+        complete = function()
             return { 'metric', 'imperial' }
-        end
+        end,
+        desc = 'Convert recipe units (metric/imperial)'
     })
+
+    -- Add the new recipe finder command
+    vim.api.nvim_create_user_command('TempuraFind', function()
+        find_recipes()
+    end, { desc = 'Find and browse saved recipes' })
 
     return M
 end
