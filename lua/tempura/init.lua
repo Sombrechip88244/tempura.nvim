@@ -60,8 +60,44 @@ function M.scrape(url)
     local markdown_content = call_python_script({'scrape', url})
 
     if markdown_content then
-        local filename = url:match("([^/]+)$") or "new_recipe"
-        local clean_filename = filename:gsub('[%?%&%=%./]', '_'):gsub('^%s*(.-)%s*$', '%1') 
+        -- Prefer the recipe title from the generated markdown as the filename
+        local function sanitize_filename(name)
+            if not name then return "" end
+            name = name:lower()
+            name = name:gsub("^%s+", ""):gsub("%s+$", "")
+            -- remove fragment/hash and other problematic chars
+            name = name:gsub("[#%%:;%?%&%=%./\\]+", "")
+            -- keep only alphanumeric, hyphen and spaces
+            name = name:gsub("[^%w%-%s]", "")
+            -- replace spaces with dash
+            name = name:gsub("%s+", "-")
+            -- trim to reasonable length
+            if name == "" or #name > 200 then
+                return ""
+            end
+            return name
+        end
+
+        -- try to extract title from markdown (first H1)
+        local title = markdown_content:match("^#%s*(.-)%s*\r?\n")
+        local filename = sanitize_filename(title)
+
+        -- fallback to last path segment of URL if no title
+        if filename == "" then
+            filename = url:match("([^/]+)$") or "new_recipe"
+            -- remove query/fragment chars and replace slashes/dots
+            filename = filename:gsub("[#%?%&%=%./\\]+", "_")
+            filename = filename:gsub("^_+", ""):gsub("_+$", "")
+            if filename == "" then
+                filename = tostring(os.time()) .. '_recipe'
+            end
+            -- keep length reasonable
+            if #filename > 200 then
+                filename = filename:sub(1,200)
+            end
+        end
+
+        local clean_filename = filename:gsub('^%s*(.-)%s*$', '%1') 
         
         -- Ensure filename is not empty and has a reasonable length
         if clean_filename == '' or #clean_filename > 255 then
